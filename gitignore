@@ -1,0 +1,22 @@
+# virtual environments
+venv/
+venv*/
+.venv/
+
+# python
+__pycache__/
+*.pyc
+
+# temporary drive files and logs (they contain location data)
+*.gpx
+*.log
+
+# local settings / secrets
+.env
+*.pem
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

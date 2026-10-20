@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Phone Location Simulator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --accent: #4f8cff;
+    --text: #e8eaed;
+    --muted: #8a8f98;
+    --success: #3ddc84;
+    --error: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid #262b33;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    font-weight: 600;
+  }
+  header .sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #map { flex: 1; }
+  .panel {
+    padding: 12px 20px;
+    background: var(--panel);
+    border-top: 1px solid #262b33;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .coords {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent);
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  button:hover { opacity: 0.9; }
+  button.secondary {
+    background: transparent;
+    border: 1px solid #3a3f4a;
+    color: var(--text);
+  }
+  #status {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+  }
+  #status.ok { background: rgba(61,220,132,0.15); color: var(--success); }
+  #status.err { background: rgba(255,92,92,0.15); color: var(--error); }
+  select {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #3a3f4a;
+    background: #12151b;
+    color: var(--text);
+    font-size: 13px;
+  }
+  #search {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #3a3f4a;
+    background: #12151b;
+    color: var(--text);
+    font-size: 13px;
+    width: 220px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📍 Phone Location Simulator</h1>
+    <div class="sub" id="tunnel-status">Checking tunnel status...</div>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <input id="search" type="text" placeholder="Search a place..." />
+    <button class="secondary" onclick="doSearch()">Search</button>
+  </div>
+</header>
+
+<div id="map"></div>
+
+<div class="panel">
+  <div>Selected: <span class="coords" id="coords">none</span></div>
+  <button onclick="applyLocation()">Set Location on Phone</button>
+  <button class="secondary" onclick="clearLocation()">Clear / Reset</button>
+  <span id="status"></span>
+</div>
+
+<div class="panel" id="drive-panel">
+  <strong>🚗 Drive</strong>
+  <span>Speed:</span>
+  <select id="speed">
+    <option value="auto" selected>Match local speed limits</option>
+    <option value="30">Max 30 km/h</option>
+    <option value="50">Max 50 km/h</option>
+    <option value="80">Max 80 km/h</option>
+    <option value="110">Max 110 km/h</option>
+  </select>
+  <button onclick="startDrive()">Drive to selected point</button>
+  <button class="secondary" onclick="stopDrive()">Stop driving</button>
+  <span id="drive-status" style="color: var(--muted);">Set a start location first, then click a destination.</span>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+  const map = L.map('map').setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let marker = null;
+  let selected = null;
+
+  function setMarker(lat, lon) {
+    selected = { lat, lon };
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat, lon]).addTo(map);
+    document.getElementById('coords').textContent =
+      lat.toFixed(6) + ", " + lon.toFixed(6);
+  }
+
+  map.on('click', (e) => {
+    setMarker(e.latlng.lat, e.latlng.lng);
+  });
+
+  function showStatus(ok, message) {
+    const el = document.getElementById('status');
+    el.textContent = message;
+    el.className = ok ? 'ok' : 'err';
+  }
+
+  async function applyLocation() {
+    if (!selected) {
+      showStatus(false, "Pick a point on the map first");
+      return;
+    }
+    showStatus(true, "Setting location...");
+    try {
+      const res = await fetch('/api/set_location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selected)
+      });
+      const data = await res.json();
+      showStatus(data.success, data.message || (data.success ? "Location set" : "Failed"));
+    } catch (err) {
+      showStatus(false, "Request failed: " + err);
+    }
+  }
+
+  async function clearLocation() {
+    showStatus(true, "Clearing...");
+    try {
+      const res = await fetch('/api/clear_location', { method: 'POST' });
+      const data = await res.json();
+      showStatus(data.success, data.message || (data.success ? "Cleared" : "Failed"));
+      if (data.success && marker) {
+        map.removeLayer(marker);
+        marker = null;
+        selected = null;
+        document.getElementById('coords').textContent = 'none';
+      }
+    } catch (err) {
+      showStatus(false, "Request failed: " + err);
+    }
+  }
+
+  async function doSearch() {
+    const q = document.getElementById('search').value;
+    if (!q) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`);
+      const results = await res.json();
+      if (results.length === 0) {
+        showStatus(false, "No results found");
+        return;
+      }
+      const { lat, lon } = results[0];
+      map.setView([lat, lon], 12);
+      setMarker(parseFloat(lat), parseFloat(lon));
+    } catch (err) {
+      showStatus(false, "Search failed: " + err);
+    }
+  }
+
+  document.getElementById('search').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  // ---- Drive simulation ----
+  let routeLine = null;
+  let carMarker = null;
+  let drivePoll = null;
+  let stopLayer = null;
+
+  function setDriveStatus(text, color) {
+    const el = document.getElementById('drive-status');
+    el.textContent = text;
+    el.style.color = color || 'var(--muted)';
+  }
+
+  function fmtTime(sec) {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
+  async function startDrive() {
+    if (!selected) {
+      setDriveStatus('Click a destination on the map first', '#ff5c5c');
+      return;
+    }
+    setDriveStatus('Finding route and road data (this can take up to a minute)...');
+    try {
+      const res = await fetch('/api/drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: selected.lat,
+          lon: selected.lon,
+          speed_kmh: document.getElementById('speed').value === 'auto'
+            ? 'auto'
+            : parseFloat(document.getElementById('speed').value)
+        })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setDriveStatus(data.message, '#ff5c5c');
+        return;
+      }
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.polyline(data.route, { color: '#4f8cff', weight: 4, opacity: 0.8 }).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+      if (stopLayer) map.removeLayer(stopLayer);
+      stopLayer = L.layerGroup((data.stops || []).map(st =>
+        L.circleMarker([st[0], st[1]], {
+          radius: 5, weight: 1, color: '#fff', fillOpacity: 0.9,
+          fillColor: st[2] === 'signal' ? '#ff5c5c' : '#e0b84b'
+        }).bindTooltip(st[2] === 'signal'
+          ? (st[3] ? 'Traffic light (red)' : 'Traffic light (green)')
+          : 'Stop sign')
+      )).addTo(map);
+      let msg = data.distance_km + ' km, about ' + fmtTime(data.duration_s);
+      if (data.mode === 'smart') {
+        const nStops = (data.stops || []).filter(st => st[3]).length;
+        msg += ', ' + nStops + ' stop' + (nStops === 1 ? '' : 's');
+        msg += ', posted limits found for ' + data.posted_limit_pct + '% of the route (rest estimated)';
+      }
+      if (data.warning) msg += '. ' + data.warning;
+      setDriveStatus(msg, data.warning ? '#e0b84b' : '#3ddc84');
+      if (drivePoll) clearInterval(drivePoll);
+      drivePoll = setInterval(pollDrive, 1000);
+    } catch (err) {
+      setDriveStatus('Request failed: ' + err, '#ff5c5c');
+    }
+  }
+
+  async function pollDrive() {
+    try {
+      const res = await fetch('/api/drive_status');
+      const d = await res.json();
+      if (d.state === 'idle') {
+        clearInterval(drivePoll); drivePoll = null;
+        return;
+      }
+      if (d.lat !== undefined) {
+        if (!carMarker) {
+          carMarker = L.circleMarker([d.lat, d.lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#ff9f43', fillOpacity: 1 }).addTo(map);
+        } else {
+          carMarker.setLatLng([d.lat, d.lon]);
+        }
+      }
+      if (d.state === 'driving') {
+        setDriveStatus('Driving... ' + Math.round(d.progress * 100) + '% (' + fmtTime(d.remaining_s) + ' left)', '#e0b84b');
+      } else if (d.state === 'arrived') {
+        clearInterval(drivePoll); drivePoll = null;
+        setDriveStatus('Arrived. Location is held at the destination until you clear it.', '#3ddc84');
+      } else if (d.state === 'failed') {
+        clearInterval(drivePoll); drivePoll = null;
+        setDriveStatus('Drive stopped unexpectedly: ' + d.message, '#ff5c5c');
+      }
+    } catch (err) {
+      setDriveStatus('Lost contact with the app', '#ff5c5c');
+    }
+  }
+
+  async function stopDrive() {
+    try {
+      const res = await fetch('/api/stop_drive', { method: 'POST' });
+      const d = await res.json();
+      if (drivePoll) { clearInterval(drivePoll); drivePoll = null; }
+      setDriveStatus(d.message);
+    } catch (err) {
+      setDriveStatus('Request failed: ' + err, '#ff5c5c');
+    }
+  }
+
+  async function pollTunnelStatus() {
+    try {
+      const res = await fetch('/api/tunnel_status');
+      const data = await res.json();
+      const el = document.getElementById('tunnel-status');
+      if (data.status === 'ready') {
+        el.textContent = '🟢 Tunnel ready — click the map to set a location';
+        el.style.color = '#3ddc84';
+      } else if (data.status === 'error') {
+        el.textContent = '🔴 ' + data.message;
+        el.style.color = '#ff5c5c';
+      } else {
+        el.textContent = '🟡 ' + data.message;
+        el.style.color = '#e0b84b';
+        setTimeout(pollTunnelStatus, 1500);
+        return;
+      }
+    } catch (err) {
+      document.getElementById('tunnel-status').textContent = 'Could not reach server';
+    }
+  }
+  pollTunnelStatus();
+</script>
+
+</body>
+</html>
